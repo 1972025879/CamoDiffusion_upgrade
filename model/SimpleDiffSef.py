@@ -38,6 +38,9 @@ class Residual(nn.Module):
 
 
 class CondUnetWrapper(nn.Module):
+    """
+    Wrapper: 意为包装器
+    """
     def __init__(self, unet, feature_exactor, translayer=None):
         super().__init__()
         self.feature_exactor = feature_exactor
@@ -58,7 +61,13 @@ class CondUnetWrapper(nn.Module):
         return self.sample_unet(x, times, conditioning_features)
 
 
-class CondUViT(UViT):
+class CondUViT(UViT): 
+    """
+    Cond = Conditional（条件的）
+    表示这是一个条件生成模型
+    能够根据额外的条件信息来指导生成过程
+    UViT = U-Net + Vision Transformer（U型网络 + 视觉Transformer）
+    """
     def __init__(self, dim, init_dim=None, out_dim=None, dim_mults=(1, 2, 4, 8), downsample_factor=2, channels=3,
                  out_channels=None, vit_depth=6, vit_dropout=0.2, attn_dim_head=32, attn_heads=4, ff_mult=4,
                  resnet_block_groups=8, learned_sinusoidal_dim=16, init_img_transform: callable = None,
@@ -181,7 +190,7 @@ class CondUViT(UViT):
 class CondGaussianDiffusion(GaussianDiffusion):
     def __init__(
             self,
-            model: UViT,
+            model: UViT,  #这里model传入的其实是model.net
             *,
             image_size,
             channels=1,
@@ -222,17 +231,20 @@ class CondGaussianDiffusion(GaussianDiffusion):
         assert channels == self.channels
         assert h == w == self.image_size
         assert cond_channels == self.cond_channels
-
         img = normalize_to_neg_one_to_one(img)
-        seg = normalize_to_neg_one_to_one(seg) if seg is not None else None
+        seg = normalize_to_neg_one_to_one(seg) if seg is not None else None  #归一化处理
         extra_cond = default(extra_cond, torch.zeros((b, self.extra_channels, h, w), device=self.device))
-        times = torch.zeros((img.shape[0],), device=self.device).float().uniform_(0, 1)
+        times = torch.zeros((img.shape[0],), device=self.device).float().uniform_(0, 1) #随机时间步采样
         return self.p_losses(img, times, cond_img, seg, extra_cond, *args, **kwargs)
 
     def p_losses(self, x_start, times, cond_img, seg=None, extra_cond=None, noise=None, *args, **kwargs):
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: torch.randn_like(x_start))  #随机加噪声
+        """
+        如果 val 不是 None，返回 val
+        如果 val 是 None，返回 d() 的结果（如果是函数的话）
+        """
 
-        # noise sample, if seg is not None, sample from seg.
+        # noise sample, if seg is not None, sample from seg.  
         if seg is not None:
             x, log_snr = self.q_sample(x_start=seg, times=times, noise=noise)
         else:
@@ -241,7 +253,7 @@ class CondGaussianDiffusion(GaussianDiffusion):
         # predict and take gradient step
         model_out = self.model(torch.cat([x, extra_cond], dim=1), log_snr, cond_img)
 
-        if self.pred_objective == 'v':
+        if self.pred_objective == 'v':#用的v预测
             padded_log_snr = right_pad_dims_to(x, log_snr)
             alpha, sigma = padded_log_snr.sigmoid().sqrt(), (-padded_log_snr).sigmoid().sqrt()
             target = alpha * noise - sigma * x_start
@@ -255,7 +267,7 @@ class CondGaussianDiffusion(GaussianDiffusion):
             # Note: x_start in here is from -1 to 1
             target = (x_start + 1)/2
 
-        if self.loss_type == 'l2':
+        if self.loss_type == 'l2': #这个
             return F.mse_loss(model_out, target)
         elif self.loss_type == 'l1':
             return F.l1_loss(model_out, target)
@@ -282,7 +294,7 @@ class CondGaussianDiffusion(GaussianDiffusion):
         steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device)
 
         for i in tqdm(range(self.num_sample_steps), desc='sampling loop time step', total=self.num_sample_steps,
-                      disable=not verbose):
+                      disable=not verbose): #采样的循环
             times = steps[i]
             times_next = steps[i + 1]
             img = self.p_sample(img, conditioning_features, extra_cond, times, times_next)

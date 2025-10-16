@@ -38,7 +38,7 @@ def simple_train_val_forward(model: nn.Module, gt=None, image=None, **kwargs):
 
 
 def modification_train_val_forward(model: nn.Module, gt=None, image=None, seg=None, **kwargs):
-    """This is for the modification task. When diffusion model add noise, will use seg instead of gt."""
+    """This is for the modification task. When diffusion model add noise, will use seg instead of gt. """
     if model.training:
         assert gt is not None and image is not None and seg is not None
         return model(gt, image, seg=seg, **kwargs)
@@ -72,7 +72,7 @@ def modification_train_val_forward_e(model: nn.Module, gt=None, image=None, seg=
     """This is for the modification task. When diffusion model add noise, will use seg instead of gt."""
     if model.training:
         assert gt is not None and image is not None and seg is not None
-        return model(gt, image, seg=seg, **kwargs)
+        return model(gt, image, seg=seg, **kwargs) #seg是随机破坏后的噪音 是structure Corruption 在dataset/data_val.py里的line143
     else:
         time_ensemble = kwargs.pop('time_ensemble') if 'time_ensemble' in kwargs else False
         gt_sizes = kwargs.pop('gt_sizes') if time_ensemble else None

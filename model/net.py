@@ -9,8 +9,8 @@ from einops import repeat
 from einops.layers.torch import Rearrange
 from timm.models.layers import to_2tuple, trunc_normal_
 
-from denoising_diffusion_pytorch.simple_diffusion import ResnetBlock, LinearAttention
-
+# from denoising_diffusion_pytorch.simple_diffusion import ResnetBlock, LinearAttention
+from model.simple_diffusion import ResnetBlock,LinearAttention
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -510,7 +510,7 @@ class Decoder(Module):
         c1_in_channels, c2_in_channels, c3_in_channels, c4_in_channels = dims[0], dims[1], dims[2], dims[3]
         embedding_dim = dim
 
-        self.linear_c4 = conv(input_dim=c4_in_channels, embed_dim=embedding_dim)
+        self.linear_c4 = conv(input_dim=c4_in_channels, embed_dim=embedding_dim) #LE
         self.linear_c3 = conv(input_dim=c3_in_channels, embed_dim=embedding_dim)
         self.linear_c2 = conv(input_dim=c2_in_channels, embed_dim=embedding_dim)
         self.linear_c1 = conv(input_dim=c1_in_channels, embed_dim=embedding_dim)
@@ -563,7 +563,6 @@ class Decoder(Module):
         t = self.time_embed(timestep_embedding(timesteps, self.time_embed_dim))
 
         c1, c2, c3, c4 = inputs
-
         ##############################################
         _x = [x]
         for blk in self.down:
@@ -583,7 +582,7 @@ class Decoder(Module):
         _c2 = self.linear_c2(c2).permute(0, 2, 1).reshape(n, -1, c2.shape[2], c2.shape[3])
         _c2 = resize(_c2, size=c1.size()[2:], mode='bilinear', align_corners=False)
         _c1 = self.linear_c1(c1).permute(0, 2, 1).reshape(n, -1, c1.shape[2], c1.shape[3])
-
+    
         L34 = self.linear_fuse34(torch.cat([_c4, _c3], dim=1))
         L2 = self.linear_fuse2(torch.cat([L34, _c2], dim=1))
         _c = self.linear_fuse1(torch.cat([L2, _c1], dim=1))
@@ -624,8 +623,9 @@ class net(nn.Module):
             'pvt_v2_b5',
         ]
         assert model_name in _available_weights, f'{model_name} is not available now!'
-        from huggingface_hub import hf_hub_download
-        return hf_hub_download('Anonymity/pvt_pretrained', f'{model_name}.pth', cache_dir='./pretrained_weights')
+        return "./pretrained_weights/Anonymity/pvt_pretrained/pvt_v2_b4_m.pth"
+        # from huggingface_hub import hf_hub_download
+        # return hf_hub_download('Anonymity/pvt_pretrained', f'{model_name}.pth', cache_dir='./pretrained_weights')
 
     def _init_weights(self):
         pretrained_dict = torch.load(self._download_weights('pvt_v2_b4_m')) #for save mem
