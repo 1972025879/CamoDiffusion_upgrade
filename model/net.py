@@ -288,32 +288,56 @@ class PyramidVisionTransformerImpr(nn.Module):
         time_token = x[:, 0]
         x = x[:, 1:].reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(x)
+        if compute_full:
+            time_token = self.time_embed[2](timestep_embedding(timesteps, self.embed_dims[2]))
+            time_token = time_token.unsqueeze(dim=1)
+            # stage 3
+            x, H, W = self.patch_embed3(x)
+            x = torch.cat([time_token, x], dim=1)
+            for i, blk in enumerate(self.block3):
+                x = blk(x, H, W)
+            x = self.norm3(x)
+            time_token = x[:, 0]
+            x = x[:, 1:].reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
+            outs.append(x)
 
-        time_token = self.time_embed[2](timestep_embedding(timesteps, self.embed_dims[2]))
-        time_token = time_token.unsqueeze(dim=1)
-        # stage 3
-        x, H, W = self.patch_embed3(x)
-        x = torch.cat([time_token, x], dim=1)
-        for i, blk in enumerate(self.block3):
-            x = blk(x, H, W)
-        x = self.norm3(x)
-        time_token = x[:, 0]
-        x = x[:, 1:].reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        outs.append(x)
+            time_token = self.time_embed[3](timestep_embedding(timesteps, self.embed_dims[3]))
+            time_token = time_token.unsqueeze(dim=1)
 
-        time_token = self.time_embed[3](timestep_embedding(timesteps, self.embed_dims[3]))
-        time_token = time_token.unsqueeze(dim=1)
+            # stage 4
+            x, H, W = self.patch_embed4(x)
+            x = torch.cat([time_token, x], dim=1)
+            for i, blk in enumerate(self.block4):
+                x = blk(x, H, W)
+            x = self.norm4(x)
+            time_token = x[:, 0]
+            x = x[:, 1:].reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
+            outs.append(x)
+        else:
+            # 计算 c3 和 c4 的预期形状 (c2 的一半和四分之一)
+            # 获取 c2 的空间尺寸
+            _, _, h_c2, w_c2 = outs[1].shape
 
-        # stage 4
-        x, H, W = self.patch_embed4(x)
-        x = torch.cat([time_token, x], dim=1)
-        for i, blk in enumerate(self.block4):
-            x = blk(x, H, W)
-        x = self.norm4(x)
-        time_token = x[:, 0]
-        x = x[:, 1:].reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
-        outs.append(x)
+            # 计算 c3 和 c4 的目标尺寸
+            # 假设 patch_embed3 和 patch_embed4 的 stride 和 patch_size 导致尺寸减半
+            # 如果 patch_embed3 stride=2, patch_embed4 stride=2 (从 c2 到 c4 总共 4 倍)
+            # 那么 c3 的尺寸应该是 (h_c2 // 2, w_c2 // 2)
+            # c4 的尺寸应该是 (h_c2 // 4, w_c2 // 4)
+            h_c3_target = h_c2 // 2
+            w_c3_target = w_c2 // 2
+            h_c4_target = h_c2 // 4
+            w_c4_target = w_c2 // 4
 
+            # 使用 F.interpolate 调整 c2 的尺寸以匹配 c3 和 c4
+            placeholder_c3 = F.interpolate(
+                outs[1], size=(h_c3_target, w_c3_target), mode='bilinear', align_corners=False
+            )
+            placeholder_c4 = F.interpolate(
+                outs[1], size=(h_c4_target, w_c4_target), mode='bilinear', align_corners=False
+            )
+
+            # 返回 [c1, c2, placeholder_c3, placeholder_c4]
+            return outs + [placeholder_c3, placeholder_c4]
         return outs
 
     def forward(self, x, timesteps, cond_img,compute_full=True):
@@ -661,7 +685,7 @@ class net(nn.Module):
         model_dict.update(pretrained_dict)
         self.backbone.load_state_dict(model_dict, strict=False)
 
-    @torch.inference_mode()
+    # @torch.inference_mode()
     def sample_unet(self, x, timesteps, cond_img):
         return self.forward(x, timesteps, cond_img)
 
