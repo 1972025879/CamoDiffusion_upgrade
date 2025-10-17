@@ -288,6 +288,7 @@ class CondGaussianDiffusion(GaussianDiffusion):
 
     @torch.no_grad()
     def p_sample_loop(self, shape, cond_img, extra_cond, verbose=True):#方案一的全局开刀 要改net的返回值
+        self.model.is_sampling=True
         self.history = []
         # self.current_sampling_step=0
         img = torch.randn(shape, device=self.device)
