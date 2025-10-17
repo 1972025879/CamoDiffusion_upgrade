@@ -293,7 +293,7 @@ class CondGaussianDiffusion(GaussianDiffusion):
         img = torch.randn(shape, device=self.device)
         ###在循环之前先清空model里的缓存
         if hasattr(self.model, 'cached_L34'):
-            self.model.cached_L34 = None
+            self.model.cached_L34 = None #确保每次开始为新批次采样时，net 的缓存状态被重置。
         ###################
         conditioning_features = self.model.extract_features(cond_img)
         steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device)

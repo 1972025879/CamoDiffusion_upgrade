@@ -260,7 +260,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             for i in range(depths[3])])
         self.norm4 = norm_layer(embed_dims[3])
 
-    def forward_features(self, x, timesteps, cond_img):
+    def forward_features(self, x, timesteps, cond_img,compute_full=True):
         time_token = self.time_embed[0](timestep_embedding(timesteps, self.embed_dims[0]))
         time_token = time_token.unsqueeze(dim=1)
 
@@ -316,8 +316,8 @@ class PyramidVisionTransformerImpr(nn.Module):
 
         return outs
 
-    def forward(self, x, timesteps, cond_img):
-        x = self.forward_features(x, timesteps, cond_img)
+    def forward(self, x, timesteps, cond_img,compute_full=True):
+        x = self.forward_features(x, timesteps, cond_img,compute_full = compute_full)
 
         #        x = self.head(x[3])
 
@@ -609,22 +609,35 @@ class net(nn.Module):
         self.backbone = pvt_v2_b4_m(in_chans=3, mask_chans=mask_chans)
         self.decode_head = Decoder(dims=[64, 128, 320, 512], dim=256, class_num=class_num, mask_chans=mask_chans)
         self._init_weights()  # load pretrain
+        self.is_sampling = False
         self.cached_L34=None  #New Code
         self.count = 0
         self.T=2 #加入继承周期和计算次数
     def forward(self, x, timesteps, cond_img):
-        compute_full = (self.cached_L34 is None)
-        features = self.backbone(x, timesteps, cond_img,compute_full) #新增cumpute_full 如果是True的话就计算所有ptv的level
-        features, layer1, layer2, layer3, layer4, L34 = self.decode_head(features, timesteps, x,cached_L34=self.cached_L34)
-        #如果是缓存是None 说明这一层是要计算L34的 要进行缓存 如果有缓存 说明这一轮将缓存使用了 
-        if self.cached_L34 is None:
-            self.cached_L34 = L34.detach() # detach 避免缓存参与梯度计算
-            self.count = 0#重置计数器
+        # 只在采样模式下启用缓存逻辑
+        if self.is_sampling:
+            # --- 缓存逻辑 ---
+            compute_full = (self.cached_L34 is None)
+
+            features = self.backbone(x, timesteps, cond_img, compute_full=compute_full)
+            features, layer1, layer2, layer3, layer4, L34 = self.decode_head(features, timesteps, x, cached_L34=self.cached_L34)
+
+            if self.cached_L34 is None:
+                self.cached_L34 = L34.detach()
+                self.count = 0
+            else:
+                self.count += 1
+                if self.count >= self.T - 1:
+                    self.cached_L34 = None
+                    self.count = 0
+            # --- 缓存逻辑结束 ---
         else:
-            self.count+=1 #count表示用过缓存的次数
-            if self.count>=self.T-1: #如果用过k次了（比如四次）就清空缓存 再在下一轮进行全部计算
-                self.cached_L34 = None
-        return features 
+            # 训练模式：始终计算全部特征，不使用缓存
+            compute_full = True
+            features = self.backbone(x, timesteps, cond_img, compute_full=compute_full)
+            features, layer1, layer2, layer3, layer4, L34 = self.decode_head(features, timesteps, x, cached_L34=None)
+
+        return features
 
     def _download_weights(self, model_name):
         _available_weights = [
