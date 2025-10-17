@@ -575,15 +575,18 @@ class Decoder(Module):
 
         ############## MLP decoder on C1-C4 ###########
         n, _, h, w = c4.shape
-        _c4 = self.linear_c4(c4).permute(0, 2, 1).reshape(n, -1, c4.shape[2], c4.shape[3])
-        _c4 = resize(_c4, size=c1.size()[2:], mode='bilinear', align_corners=False)
-        _c3 = self.linear_c3(c3).permute(0, 2, 1).reshape(n, -1, c3.shape[2], c3.shape[3])
-        _c3 = resize(_c3, size=c1.size()[2:], mode='bilinear', align_corners=False)
+        if cached_L34 is None:
+            _c4 = self.linear_c4(c4).permute(0, 2, 1).reshape(n, -1, c4.shape[2], c4.shape[3])
+            _c4 = resize(_c4, size=c1.size()[2:], mode='bilinear', align_corners=False)
+            _c3 = self.linear_c3(c3).permute(0, 2, 1).reshape(n, -1, c3.shape[2], c3.shape[3])
+            _c3 = resize(_c3, size=c1.size()[2:], mode='bilinear', align_corners=False)
         _c2 = self.linear_c2(c2).permute(0, 2, 1).reshape(n, -1, c2.shape[2], c2.shape[3])
         _c2 = resize(_c2, size=c1.size()[2:], mode='bilinear', align_corners=False)
         _c1 = self.linear_c1(c1).permute(0, 2, 1).reshape(n, -1, c1.shape[2], c1.shape[3])
-    
-        L34 = self.linear_fuse34(torch.cat([_c4, _c3], dim=1))
+        if cached_L34 is None:
+            L34 = self.linear_fuse34(torch.cat([_c4, _c3], dim=1))
+        else:
+            L34=cached_L34
         L2 = self.linear_fuse2(torch.cat([L34, _c2], dim=1))
         _c = self.linear_fuse1(torch.cat([L2, _c1], dim=1))
 
@@ -596,7 +599,7 @@ class Decoder(Module):
                 x = blk(x)
         # x = self.pred(torch.cat([x, _x.pop(-1)], dim=1))
         x = self.pred(x)
-        return x, c1, c2, c3, c4
+        return x, c1, c2, c3, c4, L34
 
 
 class net(nn.Module):
@@ -607,10 +610,21 @@ class net(nn.Module):
         self.decode_head = Decoder(dims=[64, 128, 320, 512], dim=256, class_num=class_num, mask_chans=mask_chans)
         self._init_weights()  # load pretrain
         self.cached_L34=None  #New Code
+        self.count = 0
+        self.T=2 #加入继承周期和计算次数
     def forward(self, x, timesteps, cond_img):
-        features = self.backbone(x, timesteps, cond_img)
-        features, layer1, layer2, layer3, layer4 = self.decode_head(features, timesteps, x)
-        return features
+        compute_full = (self.cached_L34 is None)
+        features = self.backbone(x, timesteps, cond_img,compute_full) #新增cumpute_full 如果是True的话就计算所有ptv的level
+        features, layer1, layer2, layer3, layer4, L34 = self.decode_head(features, timesteps, x,cached_L34=self.cached_L34)
+        #如果是缓存是None 说明这一层是要计算L34的 要进行缓存 如果有缓存 说明这一轮将缓存使用了 
+        if self.cached_L34 is None:
+            self.cached_L34 = L34.detach() # detach 避免缓存参与梯度计算
+            self.count = 0#重置计数器
+        else:
+            self.count+=1 #count表示用过缓存的次数
+            if self.count>=self.T-1: #如果用过k次了（比如四次）就清空缓存 再在下一轮进行全部计算
+                self.cached_L34 = None
+        return features 
 
     def _download_weights(self, model_name):
         _available_weights = [
