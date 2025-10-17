@@ -287,9 +287,14 @@ class CondGaussianDiffusion(GaussianDiffusion):
                                   extra_cond=extra_cond, verbose=verbose)
 
     @torch.no_grad()
-    def p_sample_loop(self, shape, cond_img, extra_cond, verbose=True):
+    def p_sample_loop(self, shape, cond_img, extra_cond, verbose=True):#方案一的全局开刀 要改net的返回值
         self.history = []
+        # self.current_sampling_step=0
         img = torch.randn(shape, device=self.device)
+        ###在循环之前先清空model里的缓存
+        if hasattr(self.model, 'cached_L34'):
+            self.model.cached_L34 = None
+        ###################
         conditioning_features = self.model.extract_features(cond_img)
         steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device)
 
