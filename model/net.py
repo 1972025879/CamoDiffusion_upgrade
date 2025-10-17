@@ -204,6 +204,7 @@ class PyramidVisionTransformerImpr(nn.Module):
         self.depths = depths
         self.embed_dims = embed_dims
         self.mask_chans = mask_chans
+        
 
         # time_embed
 
@@ -559,7 +560,7 @@ class Decoder(Module):
             Conv2d(embedding_dim // 8, self.num_classes, kernel_size=1)
         )
 
-    def forward(self, inputs, timesteps, x):
+    def forward(self, inputs, timesteps, x,cached_L34=None):#NewCode
         t = self.time_embed(timestep_embedding(timesteps, self.time_embed_dim))
 
         c1, c2, c3, c4 = inputs
@@ -574,7 +575,6 @@ class Decoder(Module):
 
         ############## MLP decoder on C1-C4 ###########
         n, _, h, w = c4.shape
-
         _c4 = self.linear_c4(c4).permute(0, 2, 1).reshape(n, -1, c4.shape[2], c4.shape[3])
         _c4 = resize(_c4, size=c1.size()[2:], mode='bilinear', align_corners=False)
         _c3 = self.linear_c3(c3).permute(0, 2, 1).reshape(n, -1, c3.shape[2], c3.shape[3])
@@ -606,7 +606,7 @@ class net(nn.Module):
         self.backbone = pvt_v2_b4_m(in_chans=3, mask_chans=mask_chans)
         self.decode_head = Decoder(dims=[64, 128, 320, 512], dim=256, class_num=class_num, mask_chans=mask_chans)
         self._init_weights()  # load pretrain
-
+        self.cached_L34=None  #New Code
     def forward(self, x, timesteps, cond_img):
         features = self.backbone(x, timesteps, cond_img)
         features, layer1, layer2, layer3, layer4 = self.decode_head(features, timesteps, x)
