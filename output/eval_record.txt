@@ -1,0 +1,4 @@
+Model:CamoDiffusion_initiate,Dataset:NC4K||Smeasure:0.893; meanEm:0.941; wFmeasure:0.858; MAE:0.029; fnr:0.124; adpEm:0.944; meanEm:0.941; maxEm:0.945; adpFm:0.875; meanFm:0.874; maxFm:0.883; BR15_mae:0.053; BR15_wF:0.812
+Model:CamoDiffusion_initiate,Dataset:COD10K||Smeasure:0.878; meanEm:0.94; wFmeasure:0.809; MAE:0.02; fnr:0.152; adpEm:0.942; meanEm:0.94; maxEm:0.945; adpFm:0.823; meanFm:0.826; maxFm:0.84; BR15_mae:0.058; BR15_wF:0.773
+Model:CamoDiffusion_initiate,Dataset:CAMO||Smeasure:0.873; meanEm:0.928; wFmeasure:0.847; MAE:0.044; fnr:0.124; adpEm:0.932; meanEm:0.928; maxEm:0.932; adpFm:0.867; meanFm:0.866; maxFm:0.874; BR15_mae:0.064; BR15_wF:0.782
+Model:CamoDiffusion_initiate,Dataset:CHAMELEON||Smeasure:0.905; meanEm:0.958; wFmeasure:0.876; MAE:0.022; fnr:0.103; adpEm:0.961; meanEm:0.958; maxEm:0.963; adpFm:0.888; meanFm:0.888; maxFm:0.897; BR15_mae:0.061; BR15_wF:0.793
