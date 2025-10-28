@@ -1,7 +1,7 @@
 project_name: CamoDiffusion
 
 __base__:
-  - config/camoDiffusion_Intiate_352x352.yaml
+  - config/camoDiffusion_352x352.yaml
 
 diffusion_model:
   name: model.SimpleDiffSef.CondGaussianDiffusion

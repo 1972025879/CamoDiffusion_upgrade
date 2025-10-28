@@ -66,10 +66,11 @@ def main(cmd='bash ./train.sh', required_gpu_count=4, memory_threshold=25000, sp
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpus', nargs='*', type=int, help="Specify GPU IDs, e.g., --gpus 0 1 2 3")
-    parser.add_argument('--count', type=int, default=4)
-    parser.add_argument('--threshold', type=int, default=10000)
+    parser.add_argument('--count', type=int, default=8)
+    parser.add_argument('--threshold', type=int, default=20000)
     args = parser.parse_args()
 
     # 执行两个任务（顺序）
-    main(cmd='bash ./train_LDF.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)
-    main(cmd='bash ./train_2_LDF.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)
+    main(cmd='bash ./train.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)
+    main(cmd='bash ./train_2.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)
+    main(cmd='bash ./sample.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)

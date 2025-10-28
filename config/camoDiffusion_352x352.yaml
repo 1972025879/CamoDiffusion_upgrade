@@ -4,7 +4,7 @@ __base__:
   - config/dataset_352x352.yaml
 
 model:
-  name: model.net_Initiate.net
+  name: model.net.net
   params:
     class_num: 1
     mask_chans: 1

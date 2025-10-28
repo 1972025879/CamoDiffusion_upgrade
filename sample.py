@@ -143,7 +143,7 @@ if __name__ == "__main__":
                 dataset_name=dataset_name)
             # === 新增：将 eval_score 保存到 txt 文件 ===
             results_file = Path(cfg.results_folder) / "evaluation_results.txt"
-            custom_header="CamoDiffusion ASDM_10step_3T_4laststepfull F2F3F4"
+            custom_header="CamoDiffusion N/A_10step"
             with open(results_file, "a") as f:
                 f.write(custom_header + "\n")
                 f.write(f"{dataset_name}:\n")

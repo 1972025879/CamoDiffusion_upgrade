@@ -78,6 +78,7 @@ def main():
         amp=cfg.fp16,
         log_with=None,  # 强制禁用 wandb
         cfg=cfg,
+        split_batches=True
     )
     if getattr(cfg, 'resume', None) or getattr(cfg, 'pretrained', None):
         trainer.load(resume_path=cfg.resume, pretrained_path=cfg.pretrained)

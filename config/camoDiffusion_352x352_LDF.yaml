@@ -10,9 +10,9 @@ model:
     mask_chans: 1
 
 cond_uvit:
-  name: model.net.EmptyObject
+  name: model.net_LDF.EmptyObject
   params:
-    conditioning_klass: model.net.EmptyObject
+    conditioning_klass: model.net_LDF.EmptyObject
 
 diffusion_model:
   name: model.SimpleDiffSef.CondGaussianDiffusion

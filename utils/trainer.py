@@ -79,8 +79,8 @@ class Trainer(object):
         """
         from accelerate import DistributedDataParallelKwargs
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-
         self.accelerator = Accelerator(
+            dispatch_batches=False,
             split_batches=split_batches,
             mixed_precision='fp16' if fp16 else 'no',
             log_with='wandb' if log_with else None,
@@ -121,7 +121,6 @@ class Trainer(object):
         # prepare model, dataloader, optimizer with accelerator
         self.model, self.opt, self.scheduler, self.train_loader, self.test_loader \
             = self.accelerator.prepare(self.model, self.opt, scheduler, self.train_loader, self.test_loader)
-
     def save(self, epoch, max_to_keep=10):
         """
         Delete the old checkpoints to save disk space.
