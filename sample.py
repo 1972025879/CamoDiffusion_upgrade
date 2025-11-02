@@ -59,7 +59,9 @@ if __name__ == "__main__":
     parser.add_argument('--target_dataset', nargs='+', type=str, default=['CAMO', 'COD10K', 'CHAMELEON', 'NC4K'])
     parser.add_argument('--time_ensemble', action='store_true')
     parser.add_argument('--batch_ensemble', action='store_true')
-
+    parser.add_argument('--custom_header', type=str, default="CamoDiffusion")
+    
+    
     cfg = add_args(parser)
     assert not (cfg.time_ensemble and cfg.batch_ensemble), 'Cannot use both time_ensemble and batch_ensemble'
     """
@@ -143,7 +145,7 @@ if __name__ == "__main__":
                 dataset_name=dataset_name)
             # === 新增：将 eval_score 保存到 txt 文件 ===
             results_file = Path(cfg.results_folder) / "evaluation_results.txt"
-            custom_header="CamoDiffusion N/A_10step"
+            custom_header = cfg.custom_header  # 从命令行参数获取
             with open(results_file, "a") as f:
                 f.write(custom_header + "\n")
                 f.write(f"{dataset_name}:\n")

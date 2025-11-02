@@ -1,0 +1,8 @@
+修改
+yaml352的loss 
+yaml384的base
+runcommand的sh名字
+sample.py的标题
+sample.sh的 .py名字、config、checkpoint的文件夹
+train.sh的config、results_folder
+train_2.sh的config、pretrained

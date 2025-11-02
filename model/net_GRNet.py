@@ -323,7 +323,9 @@ class PyramidVisionTransformerImpr(nn.Module):
             sr_ratio=sr_ratios[3], use_cache=use_cache_s4)
             for i in range(depths[3])])
         self.norm4 = norm_layer(embed_dims[3])
-
+        self.conv2 = FeatureRestorer(in_channels=embed_dims[1],out_channels=embed_dims[0])
+        self.conv3 = FeatureRestorer(in_channels=embed_dims[2],out_channels=embed_dims[1])
+        self.conv4 = FeatureRestorer(in_channels=embed_dims[3],out_channels=embed_dims[2])
         # stage-level 缓存存储
         self.cache = {'c1': None, 'c2': None, 'c3': None, 'c4': None}
 
@@ -455,6 +457,7 @@ class PyramidVisionTransformerImpr(nn.Module):
                 self.cache_counter = 0
 
         return outs
+    
     def forward_GRNet(self, x, timesteps, cond_img,outs1):
         if self.step_counter==0:
             for key in self.cache:
@@ -492,14 +495,15 @@ class PyramidVisionTransformerImpr(nn.Module):
             c1 = x
             if self.cache_mask.get('c1', False):
                 self.cache['c1'] = c1.detach()
-        outs.append(c1)
-
+        outs.append(c1)  #extra code 加入的是第一个PVT的特征
         # === Stage 2 ===
+        
         if self.cache_mask.get('c2', False) and self.cache['c2'] is not None:
             print("加载c2")
             c2 = self.cache['c2']
             x = c2
         else:
+            x = x + self.conv2(outs1[1])
             # print("计算c2")
             time_token = self.time_embed[1](timestep_embedding(timesteps, self.embed_dims[1])).unsqueeze(1)
             x, H, W = self.patch_embed2(x)
@@ -519,6 +523,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             c3 = self.cache['c3']
             print("加载c3")
         else:
+            x = x + self.conv3(outs1[2])
             # print("计算c3")
             time_token = self.time_embed[2](timestep_embedding(timesteps, self.embed_dims[2])).unsqueeze(1)
             x, H, W = self.patch_embed3(x)
@@ -538,6 +543,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             c4 = self.cache['c4']
             print("加载c4")
         else:
+            x = x + self.conv4(outs1[3])
             # print("计算c4")
             time_token = self.time_embed[3](timestep_embedding(timesteps, self.embed_dims[3])).unsqueeze(1)
             x, H, W = self.patch_embed4(c3)
@@ -673,7 +679,25 @@ class MLP(nn.Module):
         x = self.proj(x)
         return x
 
+class FeatureRestorer(nn.Module):
+    def __init__(self, in_channels=128, out_channels=64, scale_factor=2):
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)  # 通道压缩
 
+    def forward(self, x):
+        # Step 1: 上采样到 88x88
+        x = F.interpolate(x, scale_factor=self.scale_factor, mode='bilinear', align_corners=False)
+        # Step 2: 1x1卷积压缩通道数
+        x = self.conv(x)
+        return x
+
+# 使用示例
+restorer = FeatureRestorer(in_channels=128, out_channels=64, scale_factor=2)
+feature_128_44_44 = torch.randn(1, 128, 44, 44)  # 假设你的输入
+feature_64_88_88 = restorer(feature_128_44_44)
+
+print(feature_64_88_88.shape)  # torch.Size([1, 64, 88, 88])
 class conv(nn.Module):
     """
     Linear Embedding
@@ -865,10 +889,14 @@ class net(nn.Module):
             cache_mask=backbone_cache_mask,
             block_cache_mask=backbone_block_cache_mask,
             T=T)
+        self.feature_fuser = FeatureFusionRefiner()
         self.decode_head = Decoder(dims=[64, 128, 320, 512], dim=256, class_num=class_num, mask_chans=mask_chans)
         self._init_weights()  # load pretrain
     def forward(self, x, timesteps, cond_img):
-        features = self.backbone1(x, timesteps, cond_img)
+        features1 = self.backbone1(x, timesteps, cond_img)
+        features2 = self.backbone2.forward_GRNet(x, timesteps, cond_img, features1)
+        features = self.feature_fuser(features1, features2)
+        
         features, layer1, layer2, layer3, layer4 = self.decode_head(features, timesteps, x)
         return features
     def _download_weights(self, model_name):
@@ -880,11 +908,15 @@ class net(nn.Module):
         return "./pretrained_weights/Anonymity/pvt_pretrained/pvt_v2_b4_m.pth"
 
     def _init_weights(self):
-        pretrained_dict = torch.load(self._download_weights('pvt_v2_b4_m')) #for save mem
-        model_dict = self.backbone1.state_dict()
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-        model_dict.update(pretrained_dict)
-        self.backbone1.load_state_dict(model_dict, strict=False)
+        pretrained_path = self._download_weights('pvt_v2_b4_m')
+        pretrained_dict = torch.load(pretrained_path, map_location='cpu')
+
+        for backbone in [self.backbone1, self.backbone2]:
+            model_dict = backbone.state_dict()
+            # 只保留匹配的权重
+            matched_pretrained = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+            model_dict.update(matched_pretrained)
+            backbone.load_state_dict(model_dict, strict=False)
 
     @torch.inference_mode()
     def sample_unet(self, x, timesteps, cond_img):
@@ -916,3 +948,49 @@ except ImportError:
 
         def forward(self, x):
             return self.act(self.norm(self.conv(x)))
+class FeatureFusionRefiner(nn.Module):
+    def __init__(self, in_channels_list=[64, 128, 320, 512], 
+                 out_channels_list=None, 
+                 conv_cfg=dict(kernel_size=3, padding=1)):
+        """
+        Args:
+            in_channels_list: 各 stage 输入通道数 (对应 PVT 输出)
+            out_channels_list: 各 stage 输出通道数 (默认与输入相同)
+            conv_cfg: 卷积配置 (支持 kernel_size/padding 等)
+        """
+        super().__init__()
+        if out_channels_list is None:
+            out_channels_list = in_channels_list
+            
+        self.refiners = nn.ModuleList()
+        for in_ch, out_ch in zip(in_channels_list, out_channels_list):
+            self.refiners.append(
+                ConvModule(
+                    in_channels=in_ch,
+                    out_channels=out_ch,
+                    kernel_size=conv_cfg['kernel_size'],
+                    padding=conv_cfg['padding'],
+                    norm_cfg=dict(type='BN'),
+                    act_cfg=dict(type='ReLU')
+                )
+            )
+
+    def forward(self, features1, features2):
+        """
+        Args:
+            features1: List[Tensor] 四级特征 [c1, c2, c3, c4]
+            features2: List[Tensor] 四级特征 [c1, c2, c3, c4]
+        Returns:
+            refined_features: List[Tensor] 细化后的四级特征
+        """
+        assert len(features1) == len(features2) == 4, "必须包含四级特征"
+        refined_features = []
+        
+        for i in range(4):
+            # 逐级相加融合
+            fused = features1[i] + features2[i]  
+            # 3x3 卷积细化
+            refined = self.refiners[i](fused)
+            refined_features.append(refined)
+            
+        return refined_features

@@ -138,7 +138,29 @@ def structure_loss(pred, mask):
     
     raise ValueError(f"Unexpected pred type: {type(pred)}")
 
-
+def _generate_distance_map(mask):
+    """返回归一化欧氏距离图，形状同 mask，值域 [0,1]"""
+    B, C, H, W = mask.shape
+    assert C == 1
+    binary_mask = (mask > 0.5).float()
+    dist_map = torch.zeros_like(mask)
+    
+    for b in range(B):
+        m = binary_mask[b, 0].cpu().numpy().astype(np.uint8)
+        try:
+            import cv2
+            dist = cv2.distanceTransform(m, cv2.DIST_L2, 5)
+        except:
+            from scipy.ndimage import distance_transform_edt
+            dist = distance_transform_edt(m)
+        dist = torch.from_numpy(dist).to(mask.device).float()
+        # 归一化
+        d_min, d_max = dist.min(), dist.max()
+        if d_max > d_min:
+            dist = (dist - d_min) / (d_max - d_min)
+        dist_map[b, 0] = dist
+    
+    return dist_map
 def _generate_bl_dl_from_mask(mask):
     """
     从二值 mask 实时生成 BL (Body Label) 和 DL (Detail Label)
@@ -201,7 +223,24 @@ def _structure_loss_standard(pred, mask):
     """标准 structure_loss"""
     weit = 1 + 5 * torch.abs(F.avg_pool2d(mask, kernel_size=31, stride=1, padding=15) - mask)
     return _compute_weighted_bce_iou(pred, mask, weit)
-
+def _structure_loss_standard_2(pred, mask):
+    with torch.no_grad():
+        dist_map = _generate_distance_map(mask)
+        weit = 1.0 + 3.0 * (1.0 - dist_map)
+    
+    return _compute_weighted_bce_iou(pred, mask, weit)
+def _structure_loss_standard_3(pred, mask):
+    with torch.no_grad():
+        dist_map = _generate_distance_map(mask)
+        weit = 1.0 + 5.0 * (1.0 - dist_map)
+    
+    return _compute_weighted_bce_iou(pred, mask, weit)
+def _structure_loss_standard_4(pred, mask):
+    with torch.no_grad():
+        dist_map = _generate_distance_map(mask)
+        weit = 1.0 + 7.0 * (1.0 - dist_map)
+    
+    return _compute_weighted_bce_iou(pred, mask, weit)
 
 def _compute_weighted_bce_iou(pred, mask, weit):
     wbce = F.binary_cross_entropy_with_logits(pred, mask, reduction='none')
@@ -223,7 +262,7 @@ def cal_ual(seg_logits, seg_gts):
 
 
 def structure_loss_with_ual(pred, mask):
-    return structure_loss(pred, mask) + 0.5 * cal_ual(pred, mask)
+    return _structure_loss_standard_3(pred, mask) + 0.5 * cal_ual(pred, mask)
 
 
 class Bce_iou_loss(nn.Module):

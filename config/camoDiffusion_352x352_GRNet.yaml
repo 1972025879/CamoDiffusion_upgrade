@@ -4,15 +4,15 @@ __base__:
   - config/dataset_352x352.yaml
 
 model:
-  name: model.net_LDF.net
+  name: model.net_GRNet.net
   params:
     class_num: 1
     mask_chans: 1
 
 cond_uvit:
-  name: model.net_LDF.EmptyObject
+  name: model.net_GRNet.EmptyObject
   params:
-    conditioning_klass: model.net_LDF.EmptyObject
+    conditioning_klass: model.net_GRNet.EmptyObject
 
 diffusion_model:
   name: model.SimpleDiffSef.CondGaussianDiffusion
