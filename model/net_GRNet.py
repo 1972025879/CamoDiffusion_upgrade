@@ -774,14 +774,13 @@ class Decoder(nn.Module):
         self.linear_c2 = conv(input_dim=c2_in_channels, embed_dim=embedding_dim)
         self.linear_c1 = conv(input_dim=c1_in_channels, embed_dim=embedding_dim)
 
-        self.linear_fuse = ConvModule(in_channels=embedding_dim * 4, out_channels=embedding_dim, kernel_size=1,
-                                      norm_cfg=dict(type='BN', requires_grad=True))
-        self.linear_fuse34 = ConvModule(in_channels=embedding_dim * 2, out_channels=embedding_dim, kernel_size=1,
-                                        norm_cfg=dict(type='BN', requires_grad=True))
-        self.linear_fuse2 = ConvModule(in_channels=embedding_dim * 2, out_channels=embedding_dim, kernel_size=1,
-                                       norm_cfg=dict(type='BN', requires_grad=True))
-        self.linear_fuse1 = ConvModule(in_channels=embedding_dim * 2, out_channels=embedding_dim, kernel_size=1,
-                                       norm_cfg=dict(type='BN', requires_grad=True))
+        # 替换原来的 linear_fuse34/2/1
+        self.fuse3 = ConvModule(in_channels=embedding_dim * 2, out_channels=embedding_dim, kernel_size=3, padding=1,
+                                norm_cfg=dict(type='BN'), act_cfg=dict(type='ReLU'))
+        self.fuse2 = ConvModule(in_channels=embedding_dim * 2, out_channels=embedding_dim, kernel_size=3, padding=1,
+                                norm_cfg=dict(type='BN'), act_cfg=dict(type='ReLU'))
+        self.fuse1 = ConvModule(in_channels=embedding_dim * 2, out_channels=embedding_dim, kernel_size=3, padding=1,
+                                norm_cfg=dict(type='BN'), act_cfg=dict(type='ReLU'))
 
         self.time_embed_dim = embedding_dim
         self.time_embed = nn.Sequential(
@@ -838,17 +837,24 @@ class Decoder(nn.Module):
         ############## MLP decoder on C1-C4 ###########
         n, _, h, w = c4.shape
 
-        _c4 = self.linear_c4(c4).permute(0, 2, 1).reshape(n, -1, c4.shape[2], c4.shape[3])
-        _c4 = resize(_c4, size=c1.size()[2:], mode='bilinear', align_corners=False)
-        _c3 = self.linear_c3(c3).permute(0, 2, 1).reshape(n, -1, c3.shape[2], c3.shape[3])
-        _c3 = resize(_c3, size=c1.size()[2:], mode='bilinear', align_corners=False)
-        _c2 = self.linear_c2(c2).permute(0, 2, 1).reshape(n, -1, c2.shape[2], c2.shape[3])
-        _c2 = resize(_c2, size=c1.size()[2:], mode='bilinear', align_corners=False)
-        _c1 = self.linear_c1(c1).permute(0, 2, 1).reshape(n, -1, c1.shape[2], c1.shape[3])
-    
-        L34 = self.linear_fuse34(torch.cat([_c4, _c3], dim=1))
-        L2 = self.linear_fuse2(torch.cat([L34, _c2], dim=1))
-        _c = self.linear_fuse1(torch.cat([L2, _c1], dim=1))
+        # Step 1: 通道映射（保持你的 conv 模块）
+        _c4 = self.linear_c4(c4).permute(0, 2, 1).reshape(n, -1, c4.shape[2], c4.shape[3])  # [B, C, H/32, W/32]
+        _c3 = self.linear_c3(c3).permute(0, 2, 1).reshape(n, -1, c3.shape[2], c3.shape[3])  # [B, C, H/16, W/16]
+        _c2 = self.linear_c2(c2).permute(0, 2, 1).reshape(n, -1, c2.shape[2], c2.shape[3])  # [B, C, H/8,  W/8]
+        _c1 = self.linear_c1(c1).permute(0, 2, 1).reshape(n, -1, c1.shape[2], c1.shape[3])  # [B, C, H/4,  W/4]
+
+        # Step 2: 自顶向下融合（Top-down + lateral connection）
+        # P4 → P3
+        P4_up = resize(_c4, size=_c3.shape[2:], mode='bilinear', align_corners=False)
+        P3 = self.fuse3(torch.cat([_c3, P4_up], dim=1))  # [B, C, H/16, W/16]
+
+        # P3 → P2
+        P3_up = resize(P3, size=_c2.shape[2:], mode='bilinear', align_corners=False)
+        P2 = self.fuse2(torch.cat([_c2, P3_up], dim=1))  # [B, C, H/8, W/8]
+
+        # P2 → P1
+        P2_up = resize(P2, size=_c1.shape[2:], mode='bilinear', align_corners=False)
+        _c = self.fuse1(torch.cat([_c1, P2_up], dim=1))  # [B, C, H/4, W/4]
 
         # fusion x_feat and x then transposed conv
         x = torch.cat([_c, x], dim=1)
