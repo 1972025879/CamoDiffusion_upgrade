@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from einops import repeat
 from einops.layers.torch import Rearrange
 from timm.models.layers import to_2tuple, trunc_normal_, DropPath # 导入 DropPath
+import timm
 
 # from denoising_diffusion_pytorch.simple_diffusion import ResnetBlock, LinearAttention
 from model.simple_diffusion import ResnetBlock,LinearAttention
@@ -387,6 +388,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             if self.cache_mask.get('c1', False):
                 self.cache['c1'] = c1.detach()
         outs.append(c1)
+        # print("c1:",c1.shape)
 
         # === Stage 2 ===
         if self.cache_mask.get('c2', False) and self.cache['c2'] is not None:
@@ -407,6 +409,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             if self.cache_mask.get('c2', False):
                 self.cache['c2'] = c2.detach()
         outs.append(c2)
+        # print("c2:",c2.shape)
 
         # === Stage 3 ===
         if self.cache_mask.get('c3', False) and self.cache['c3'] is not None:
@@ -426,7 +429,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             if self.cache_mask.get('c3', False):
                 self.cache['c3'] = c3.detach()
         outs.append(c3)
-
+        # print("c3:",c3.shape)
         # === Stage 4 ===
         if self.cache_mask.get('c4', False) and self.cache['c4'] is not None:
             c4 = self.cache['c4']
@@ -445,7 +448,7 @@ class PyramidVisionTransformerImpr(nn.Module):
             if self.cache_mask.get('c4', False):
                 self.cache['c4'] = c4.detach()
         outs.append(c4)
-
+        # print("c4:",c4.shape)
         # 周期清空
         self.step_counter += 1
 
@@ -895,15 +898,44 @@ class net(nn.Module):
             cache_mask=backbone_cache_mask,
             block_cache_mask=backbone_block_cache_mask,
             T=T)
+        # 在 net.__init__ 中添加
+        self.cnn_backbone = timm.create_model(
+            model_name="resnet50",
+            pretrained=True,            # 加载 ImageNet 预训练权重
+            features_only=True,         # 输出多 stage 特征
+            out_indices=(1, 2, 3, 4)    # 对应 r2, r3, r4, r5 → 匹配 PVT 的 c1~c4 空间分辨率
+        )
+        self.cnn_proj = nn.ModuleList([
+            ConvBNReLU(256, 64, 1),   # r2 → 64
+            ConvBNReLU(512, 128, 1),  # r3 → 128
+            ConvBNReLU(1024, 320, 1), # r4 → 320
+            ConvBNReLU(2048, 512, 1), # r5 → 512
+        ])
         self.feature_fuser = FeatureFusionRefiner()
+        self.cross_attn_1 = CrossAttention(dim=128, num_heads=8)
+        self.cross_attn_2 = CrossAttention(dim=320, num_heads=8)
+        self.cross_attn_3 = CrossAttention(dim=512, num_heads=8)
         self.decode_head = Decoder(dims=[64, 128, 320, 512], dim=256, class_num=class_num, mask_chans=mask_chans)
         self._init_weights()  # load pretrain
     def forward(self, x, timesteps, cond_img):
         features1 = self.backbone1(x, timesteps, cond_img)
         features2 = self.backbone2.forward_GRNet(x, timesteps, cond_img, features1)
-        features = self.feature_fuser(features1, features2)
-        
-        features, layer1, layer2, layer3, layer4 = self.decode_head(features, timesteps, x)
+        features = self.feature_fuser(features1, features2) #做了图的 做了残差后的features
+
+        # 提取 CNN 特征
+        cnn_feats = self.cnn_backbone(cond_img)  # list of 4 tensors
+        cnn_proj = [proj(feat) for proj, feat in zip(self.cnn_proj, cnn_feats)] #对齐
+
+        # 使用 CrossAttention 融合
+        fused_features = []
+        fused_features.append(features[0]+cnn_proj[0])
+        for i in range(1, 4):  # i = 1, 2, 3 → c2, c3, c4
+            cross_attn = getattr(self, f'cross_attn_{i}')
+            fused = cross_attn(features[i], cnn_proj[i])
+            fused_features.append(fused)
+
+        # 解码器
+        features, layer1, layer2, layer3, layer4 = self.decode_head(fused_features, timesteps, x)
         return features
     def _download_weights(self, model_name):
         _available_weights = [
@@ -1000,3 +1032,66 @@ class FeatureFusionRefiner(nn.Module):
             refined_features.append(refined)
             
         return refined_features
+class ConvBNReLU(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1):
+        super().__init__()
+        self.conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size,
+            stride=stride, padding=padding, dilation=dilation, groups=groups, bias=False
+        )
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.relu(x)
+        return x
+
+class CrossAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+
+        # Q 来自 PVT 特征
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        # K, V 来自 CNN 特征
+        self.kv = nn.Linear(dim, dim * 2, bias=qkv_bias)
+
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, pvt_feat, cnn_feat):
+        B, C, H, W = pvt_feat.shape
+        N = H * W
+
+        # Reshape for attention: [B, C, H, W] -> [B, N, C]
+        pvt_flat = pvt_feat.flatten(2).transpose(1, 2)  # [B, N, C]
+        cnn_flat = cnn_feat.flatten(2).transpose(1, 2)  # [B, N, C]
+
+        # Generate Q from PVT
+        q = self.q(pvt_flat).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+
+        # Generate K, V from CNN
+        kv = self.kv(cnn_flat).reshape(B, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]
+
+        # Compute attention
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        # Apply attention to V
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+
+        # Project back
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        # Reshape back to [B, C, H, W]
+        x = x.transpose(1, 2).reshape(B, C, H, W)
+
+        return x

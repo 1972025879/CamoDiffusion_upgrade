@@ -1,6 +1,7 @@
 media
 results
 results_GRNet
+results_EORSSD
 wandb
 pretrained_weights
 denoising-diffusion-pytorch

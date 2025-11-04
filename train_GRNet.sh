@@ -16,7 +16,7 @@ accelerate launch --main_process_port 29501 train.py \
     --lr_min=0 \
     --set optimizer.params.lr=1e-5
 accelerate launch --main_process_port=29501 sample.py \
-  --custom_header "CamoDiffusion N/A_GRNet_New_step10" \
+  --custom_header "CamoDiffusion N/A_GRNet_CrossAttention_step10" \
   --config config/camoDiffusion_384x384_GRNet.yaml \
   --results_folder /home/4T/wuhao_zjc/aa_new_document/CamoDiffusion/results \
   --checkpoint /home/4T/wuhao_zjc/aa_new_document/CamoDiffusion/results_GRNet/model-best.pt \
