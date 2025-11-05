@@ -66,7 +66,7 @@ def main(cmd='bash ./train.sh', required_gpu_count=4, memory_threshold=25000, sp
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpus', nargs='*', type=int, help="Specify GPU IDs, e.g., --gpus 0 1 2 3")
-    parser.add_argument('--count', type=int, default=4)
+    parser.add_argument('--count', type=int, default=8)
     parser.add_argument('--threshold', type=int, default=13000)
     args = parser.parse_args()
 

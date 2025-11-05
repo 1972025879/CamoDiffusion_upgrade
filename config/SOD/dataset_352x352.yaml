@@ -1,15 +1,15 @@
 train_dataset:
   name: dataset.data_val.PolypObjDataset
   params:
-    image_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/EORSSD-dataset/train-images/'
-    gt_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/EORSSD-dataset/train-labels/'
+    image_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/TrainDataset/ORSSD/Image/'
+    gt_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/TrainDataset/ORSSD/GT/'
     trainsize: 352
 
 test_dataset:
-  EORSSD:
+  ORSSD:
     name: dataset.data_val.test_dataset
     params:
-      image_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/EORSSD-dataset/test-images/'
-      gt_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/EORSSD-dataset/test-labels/'
+      image_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/TestDataset/ORSSD/Image/'
+      gt_root: '/home/4T/wuhao_zjc/ab_new_document/Datasets/TestDataset/ORSSD/GT/'
       testsize: 352
   

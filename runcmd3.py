@@ -71,4 +71,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # 执行两个任务（顺序）
-    main(cmd='bash ./trainORSSD.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)
+    main(cmd='bash ./train.sh', required_gpu_count=args.count, memory_threshold=args.threshold, specified_gpus=args.gpus)

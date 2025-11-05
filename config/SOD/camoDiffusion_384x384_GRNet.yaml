@@ -1,7 +1,7 @@
 project_name: CamoDiffusion
 
 __base__:
-  - config/camoDiffusion_352x352_GRNet.yaml
+  - config/SOD/camoDiffusion_352x352_GRNet.yaml
 
 diffusion_model:
   name: model.SimpleDiffSef.CondGaussianDiffusion

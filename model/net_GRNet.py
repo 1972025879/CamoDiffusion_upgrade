@@ -912,9 +912,9 @@ class net(nn.Module):
             ConvBNReLU(2048, 512, 1), # r5 → 512
         ])
         self.feature_fuser = FeatureFusionRefiner()
-        self.cross_attn_1 = CrossAttention(dim=128, num_heads=8)
-        self.cross_attn_2 = CrossAttention(dim=320, num_heads=8)
-        self.cross_attn_3 = CrossAttention(dim=512, num_heads=8)
+        # self.cross_attn_1 = CrossAttention(dim=128, num_heads=8)
+        # self.cross_attn_2 = CrossAttention(dim=320, num_heads=8)
+        # self.cross_attn_3 = CrossAttention(dim=512, num_heads=8)
         self.decode_head = Decoder(dims=[64, 128, 320, 512], dim=256, class_num=class_num, mask_chans=mask_chans)
         self._init_weights()  # load pretrain
     def forward(self, x, timesteps, cond_img):
@@ -922,20 +922,20 @@ class net(nn.Module):
         features2 = self.backbone2.forward_GRNet(x, timesteps, cond_img, features1)
         features = self.feature_fuser(features1, features2) #做了图的 做了残差后的features
 
-        # 提取 CNN 特征
-        cnn_feats = self.cnn_backbone(cond_img)  # list of 4 tensors
-        cnn_proj = [proj(feat) for proj, feat in zip(self.cnn_proj, cnn_feats)] #对齐
+        # # 提取 CNN 特征
+        # cnn_feats = self.cnn_backbone(cond_img)  # list of 4 tensors
+        # cnn_proj = [proj(feat) for proj, feat in zip(self.cnn_proj, cnn_feats)] #对齐
 
-        # 使用 CrossAttention 融合
-        fused_features = []
-        fused_features.append(features[0]+cnn_proj[0])
-        for i in range(1, 4):  # i = 1, 2, 3 → c2, c3, c4
-            cross_attn = getattr(self, f'cross_attn_{i}')
-            fused = cross_attn(features[i], cnn_proj[i])
-            fused_features.append(fused)
+        # # 使用 CrossAttention 融合
+        # fused_features = []
+        # fused_features.append(features[0]+cnn_proj[0])
+        # for i in range(1, 4):  # i = 1, 2, 3 → c2, c3, c4
+        #     cross_attn = getattr(self, f'cross_attn_{i}')
+        #     fused = cross_attn(features[i], cnn_proj[i])
+        #     fused_features.append(fused)
 
-        # 解码器
-        features, layer1, layer2, layer3, layer4 = self.decode_head(fused_features, timesteps, x)
+        # # 解码器
+        features, layer1, layer2, layer3, layer4 = self.decode_head(features, timesteps, x)
         return features
     def _download_weights(self, model_name):
         _available_weights = [

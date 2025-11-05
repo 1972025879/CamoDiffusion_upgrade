@@ -135,3 +135,69 @@ def eval(mask_path='./Dataset/TestDataset',
         }
         print(dataset_name, ":", results)
         return results
+
+import os
+import cv2
+from tqdm import tqdm
+from py_sod_metrics import MAE, Emeasure, Fmeasure, Smeasure
+
+
+def eval2(mask_path='./Dataset/TestDataset',
+          pred_path='./results',
+          dataset_name='COD10K'):
+    """
+    使用 py_sod_metrics 计算标准 SOD 8 项指标。
+    接口与原始 eval 完全一致，但指标计算方式来自第一个代码。
+    """
+    mask_root = os.path.join(mask_path, dataset_name, 'GT')
+    pred_root = os.path.join(pred_path, dataset_name)
+
+    if not os.path.exists(mask_root):
+        raise FileNotFoundError(f"GT path not found: {mask_root}")
+    if not os.path.exists(pred_root):
+        raise FileNotFoundError(f"Pred path not found: {pred_root}")
+
+    mask_name_list = sorted(os.listdir(mask_root))
+
+    FM = Fmeasure()
+    SM = Smeasure()
+    EM = Emeasure()
+    M = MAE()
+
+    for mask_name in tqdm(mask_name_list, total=len(mask_name_list)):
+        mask_path_full = os.path.join(mask_root, mask_name)
+        pred_path_full = os.path.join(pred_root, mask_name)
+
+        mask = cv2.imread(mask_path_full, cv2.IMREAD_GRAYSCALE)
+        pred = cv2.imread(pred_path_full, cv2.IMREAD_GRAYSCALE)
+
+        if mask is None or pred is None:
+            raise ValueError(f"Failed to load image: {mask_name}")
+
+        # 可选：确保尺寸一致（部分数据集可能需要）
+        if mask.shape != pred.shape:
+            pred = cv2.resize(pred, (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_LINEAR)
+
+        FM.step(pred=pred, gt=mask)
+        SM.step(pred=pred, gt=mask)
+        EM.step(pred=pred, gt=mask)
+        M.step(pred=pred, gt=mask)
+
+    fm = FM.get_results()["fm"]
+    sm = SM.get_results()["sm"]
+    em = EM.get_results()["em"]
+    mae = M.get_results()["mae"]
+
+    results = {
+        "Smeasure": f"{sm:.4f}",
+        "MAE": f"{mae:.4f}",
+        "adpEm": f"{em['adp']:.4f}",
+        "meanEm": f"{em['curve'].mean():.4f}",
+        "maxEm": f"{em['curve'].max():.4f}",
+        "adpFm": f"{fm['adp']:.4f}",
+        "meanFm": f"{fm['curve'].mean():.4f}",
+        "maxFm": f"{fm['curve'].max():.4f}",
+    }
+
+    print(f"{dataset_name}: {results}")
+    return results

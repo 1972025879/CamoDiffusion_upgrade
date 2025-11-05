@@ -1,7 +1,7 @@
 project_name: CamoDiffusion
 
 __base__:
-  - config/dataset_352x352.yaml
+  - config/SOD/dataset_352x352.yaml
 
 model:
   name: model.net_GRNet.net
