@@ -7,3 +7,4 @@ wandb
 pretrained_weights
 denoising-diffusion-pytorch
 MatlabEvaluationTools
+dpmsolver

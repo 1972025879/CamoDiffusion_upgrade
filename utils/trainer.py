@@ -72,6 +72,7 @@ class Trainer(object):
             split_batches=True,
             log_with='wandb',
             cfg=None,
+            sampler='ddpm'
     ):
         super().__init__()
         """
@@ -104,7 +105,8 @@ class Trainer(object):
         self.train_num_epoch = train_num_epoch
         # optimizer
         self.opt = optimizer
-
+        self.sampler = sampler
+        
         if self.accelerator.is_main_process:
     # save results in wandb folder if results_folder is not specified
             if results_folder:
@@ -195,7 +197,7 @@ class Trainer(object):
             gt = [np.array(x, np.float32) for x in gt]
             gt = [x / (x.max() + 1e-8) for x in gt]
             image = image.to(device).squeeze(1)
-            out = self.train_val_forward_fn(model, image=image, verbose=False)
+            out = self.train_val_forward_fn(model, image=image, verbose=False, sampler=self.sampler)
             res = out["pred"].detach().cpu()
             maes += [cal_mae(g, r, thresholding, save_to, n) for g, r, n in zip(gt, res, name)]
         # gather all the results from different processes
@@ -217,11 +219,24 @@ class Trainer(object):
             _best_mae = 1e10
 
         def cal_mae(gt, res, thresholding, save_to=None, n=None):
-            res = res.cpu().numpy().squeeze()
+            # res: torch.Tensor, shape (1, H, W) or (H, W)
+            if res.ndim == 2:
+                res = res.unsqueeze(0).unsqueeze(0)  # (H, W) -> (1, 1, H, W)
+            elif res.ndim == 3:
+                res = res.unsqueeze(0)  # (1, H, W) -> (1, 1, H, W)
+
+            # Interpolate to gt shape
+            res = F.interpolate(res, size=gt.shape, mode='bilinear', align_corners=False)
+            res = res.squeeze().cpu().numpy()  # now (H_gt, W_gt)
+
+            # Normalize to [0, 1]
+            res = (res - res.min()) / (res.max() - res.min() + 1e-8)
+            res = (res > 0.5).float() if thresholding else res
+
             if save_to is not None:
                 plt.imsave(os.path.join(save_to, n), res, cmap='gray')
-            return np.sum(np.abs(res - gt)) * 1.0 / (gt.shape[0] * gt.shape[1])
 
+            return np.sum(np.abs(res - gt)) * 1.0 / (gt.shape[0] * gt.shape[1])
         model.eval()
         model = accelerator.unwrap_model(model)
         device = model.device
@@ -233,7 +248,7 @@ class Trainer(object):
             gt = [x / (x.max() + 1e-8) for x in gt]
             image = image.to(device).squeeze(1)
             ensem_out = self.train_val_forward_fn(model, image=image, time_ensemble=True,
-                                                  gt_sizes=[g.shape for g in gt], verbose=False)
+                                                  gt_sizes=[g.shape for g in gt], verbose=False, sampler=self.sampler)
             ensem_res = ensem_out["pred"]
 
             ensemble_maes += [cal_mae(g, r, thresholding, save_to, n) for g, r, n in zip(gt, ensem_res, name)]
@@ -266,7 +281,7 @@ class Trainer(object):
             image = image.to(device).squeeze(1)
             batch_res = []
             for i in range(5):
-                ensem_out = self.train_val_forward_fn(model, image=image, time_ensemble=True, verbose=False)
+                ensem_out = self.train_val_forward_fn(model, image=image, time_ensemble=True, verbose=False, sampler=self.sampler)
                 ensem_res = ensem_out["pred"].detach().cpu()
                 batch_res.append(ensem_res)
             batch_res = torch.mean(torch.concat(batch_res, dim=1), dim=1, keepdim=True)

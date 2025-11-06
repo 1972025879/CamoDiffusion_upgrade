@@ -3,7 +3,8 @@ from einops import rearrange, pack, unpack
 from torch import nn
 
 from denoising_diffusion_pytorch.simple_diffusion import *
-
+from .dpm_solver_pytorch import NoiseScheduleVP, model_wrapper, DPM_Solver
+import torch.nn.functional as F
 
 class PreNorm(nn.Module):
     def __init__(self, dim, fn):
@@ -220,7 +221,7 @@ class CondGaussianDiffusion(GaussianDiffusion):
         self.loss_type = loss_type
         self.extra_channels = extra_channels
         self.cond_channels = cond_channels
-
+        self.noise_d=noise_d
         # This history is used to store the history of the x_start in reverse diffusion process
         # When call the sample function, the history will be reset and store the x_start of each sample
         self.history = []
@@ -377,8 +378,150 @@ class CondGaussianDiffusion(GaussianDiffusion):
         posterior_variance = squared_sigma_next * c
 
         return model_mean, posterior_variance
+    @torch.no_grad()
+    def ddim_sample(self, cond_img, extra_cond=None, verbose=True):
+        b, c, h, w = cond_img.shape
+        extra_cond = default(extra_cond, torch.zeros((b, self.extra_channels, h, w), device=self.device))
+        return self.ddim_p_sample_loop((b, self.channels, h, w), cond_img, extra_cond, verbose)
 
+    @torch.no_grad()
+    def ddim_p_sample_loop(self, shape, cond_img, extra_cond, verbose=True):
+        self.history = []
+        img = torch.randn(shape, device=self.device)
 
+        # 提前提取条件特征（只需一次）
+        conditioning_features = self.model.extract_features(cond_img)
+
+        # DDIM 使用非均匀时间步，但仍用 linspace 兼容你的 num_sample_steps
+        steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device)
+
+        for i in tqdm(range(self.num_sample_steps), desc='DDIM sampling', total=self.num_sample_steps, disable=not verbose):
+            t = steps[i]
+            t_next = steps[i + 1]
+            img = self.ddim_p_sample(img, conditioning_features, extra_cond, t, t_next)
+
+        img.clamp_(-1., 1.)
+        img = unnormalize_to_zero_to_one(img)
+        return img
+
+    @torch.no_grad()
+    def ddim_p_sample(self, x, cond, extra_cond, time, time_next):
+        batch, *_, device = *x.shape, x.device
+
+        log_snr = self.log_snr(time)
+        log_snr_next = self.log_snr(time_next)
+
+        alpha = log_snr.sigmoid().sqrt()
+        sigma = (-log_snr).sigmoid().sqrt()
+        alpha_next = log_snr_next.sigmoid().sqrt()
+
+        # 注意：这里直接使用模型预测的 x0（因 pred_objective='x0'）
+        batch_log_snr = repeat(log_snr, ' -> b', b=x.shape[0])
+        pred = self.model.sample_unet(torch.cat([x, extra_cond], dim=1), batch_log_snr, cond)
+
+        if self.pred_objective == 'x0':
+            x_start = pred.tanh().clamp(-1., 1.)
+        elif self.pred_objective == 'eps':
+            x_start = (x - sigma * pred) / alpha
+        elif self.pred_objective == 'v':
+            x_start = alpha * x - sigma * pred
+        else:
+            raise NotImplementedError
+
+        self.history.append(x_start)
+
+        # DDIM 核心：确定性更新（无噪声项）
+        x_next = alpha_next * x_start + ( (1 - alpha_next**2).sqrt() / (1 - alpha**2).sqrt() ) * (x - alpha * x_start)
+
+        return x_next
+    @torch.no_grad()
+    def dpm_sample(self, cond_img, extra_cond=None, verbose=True):
+        b, c, h, w = cond_img.shape
+        device = cond_img.device
+        extra_cond = default(extra_cond, torch.zeros((b, self.extra_channels, h, w), device=device))
+        N = self.noise_d  # e.g., 70
+
+        # ===== Step 1: Safe alphas_cumprod with epsilon =====
+        timesteps = torch.linspace(0, N - 1, N, device=device)
+        t_cont = timesteps / (N - 1)
+        log_snr_vals = self.log_snr(t_cont)
+        alphas_cumprod = torch.sigmoid(log_snr_vals).clamp(1e-6, 1 - 1e-6)
+
+        if verbose:
+            print(f"[DPM] alphas_cumprod range: [{alphas_cumprod.min().item():.6f}, {alphas_cumprod.max().item():.6f}]")
+
+        # ===== Step 2: Use safer numerical_clip_alpha (don't disable!) =====
+        def safe_clip(self, log_alphas, clipped_lambda=-10.0):
+            log_alphas = log_alphas.clamp(max=-1e-6)  # prevent log(1) -> 0 -> log_sigma = -inf
+            log_sigmas = 0.5 * torch.log(1. - torch.exp(2. * log_alphas))
+            lambs = log_alphas - log_sigmas
+            idx = torch.searchsorted(torch.flip(lambs, [0]), clipped_lambda)
+            if idx > 0:
+                log_alphas = log_alphas[:-idx]
+            return log_alphas
+
+        original_clip = NoiseScheduleVP.numerical_clip_alpha
+        NoiseScheduleVP.numerical_clip_alpha = safe_clip
+        noise_schedule = NoiseScheduleVP(schedule='discrete', alphas_cumprod=alphas_cumprod)
+        NoiseScheduleVP.numerical_clip_alpha = original_clip  # restore
+
+        if verbose:
+            print(f"[DPM] NoiseScheduleVP total_N = {noise_schedule.total_N}")
+
+        # ===== Step 3: Safe model_fn =====
+        def model_fn(x, t_continuous):
+            t_model = t_continuous.clamp(1e-5, 1.0 - 1e-5)
+            # t_model = (1.0 - t_continuous).clamp(1e-5, 1.0 - 1e-5)  # 🔒 关键保护
+
+            log_snr = self.log_snr(t_model)
+            x_input = torch.cat([x, extra_cond], dim=1)
+            pred = self.model.sample_unet(x_input, log_snr, cond_img)
+
+            if torch.isnan(pred).any() or torch.isinf(pred).any():
+                print("[DPM] NaN/Inf in pred! Clamping.")
+                pred = torch.nan_to_num(pred, nan=0.0, posinf=1.0, neginf=-1.0)
+
+            if self.pred_objective == 'x0':
+                x0 = pred.tanh().clamp(-1., 1.)
+            elif self.pred_objective == 'eps':
+                alpha = torch.sqrt(torch.sigmoid(log_snr)).view(-1, *[1]*(x.dim()-1))
+                sigma = torch.sqrt(1. - torch.sigmoid(log_snr)).view(-1, *[1]*(x.dim()-1))
+                x0 = (x - sigma * pred) / alpha
+            elif self.pred_objective == 'v':
+                alpha = torch.sqrt(torch.sigmoid(log_snr)).view(-1, *[1]*(x.dim()-1))
+                sigma = torch.sqrt(1. - torch.sigmoid(log_snr)).view(-1, *[1]*(x.dim()-1))
+                x0 = alpha * x - sigma * pred
+            else:
+                raise NotImplementedError
+
+            return x0
+
+        # ===== Step 4: Wrap and sample =====
+        model_fn_wrapped = model_wrapper(
+            model_fn,
+            noise_schedule,
+            model_type="x_start",
+            guidance_type="uncond"
+        )
+
+        x_T = torch.randn((b, self.channels, h, w), device=device)
+        dpm_solver = DPM_Solver(
+            model_fn_wrapped,
+            noise_schedule,
+            algorithm_type="dpmsolver++",
+            # correcting_x0_fn="dynamic_thresholding",  # 可尝试启用
+        )
+
+        x_0 = dpm_solver.sample(
+            x_T,
+            steps=20,
+            order=2,
+            skip_type="time_uniform",
+            method="multistep",
+            t_start=1.0,
+            t_end=1.0 / N,
+        )
+        return unnormalize_to_zero_to_one(x_0.clamp(-1, 1))
 class ResCondGaussianDiffusion(CondGaussianDiffusion):
     def __init__(self, *args, **kwargs):
         super(ResCondGaussianDiffusion, self).__init__(*args, **kwargs)

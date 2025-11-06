@@ -17,7 +17,7 @@ train_dataset:
     boundary_modification: True
 
 test_dataset:
-  EORSSD:
+  ORSSD:
     name: dataset.data_val.test_dataset
     params:
       testsize: 384

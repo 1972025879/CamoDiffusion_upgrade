@@ -288,14 +288,27 @@ class CondGaussianDiffusion(GaussianDiffusion):
 
     @torch.no_grad()
     def p_sample_loop(self, shape, cond_img, extra_cond, verbose=True):
+        # <<< [DELETED] 移除 self.model.is_sampling=True
         self.history = []
-        self.model.is_sampling=True
         img = torch.randn(shape, device=self.device)
+
+        ###在循环之前先清空model里的缓存
+        if hasattr(self.model, 'backbone') and hasattr(self.model.backbone, '_clear_all_cache'):
+            self.model.backbone._clear_all_cache()
+        ###################
+
+        # <<< [NEW] 开始重置 PVT 的 step_counter
+        # 重置 PVT 的 step_counter (在 p_sample_loop 开始时)
+        if hasattr(self.model, 'backbone') and hasattr(self.model.backbone, 'step_counter'):
+            self.model.backbone.step_counter = 0 # 重置计数器，确保每个采样序列都从步数 0 开始
+        # <<< [NEW] 结束重置 PVT 的 step_counter
+
         conditioning_features = self.model.extract_features(cond_img)
-        steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device)
+        steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device) #linspace 是 "linear spacing" 的缩写，意思是线性间隔。
 
         for i in tqdm(range(self.num_sample_steps), desc='sampling loop time step', total=self.num_sample_steps,
                       disable=not verbose): #采样的循环
+            # <<< [DELETED] 移除 extra code1: if i==6: self.model.is_sampling=False
             times = steps[i]
             times_next = steps[i + 1]
             img = self.p_sample(img, conditioning_features, extra_cond, times, times_next)
@@ -364,7 +377,62 @@ class CondGaussianDiffusion(GaussianDiffusion):
         posterior_variance = squared_sigma_next * c
 
         return model_mean, posterior_variance
+    @torch.no_grad()
+    def ddim_sample(self, cond_img, extra_cond=None, verbose=True):
+        b, c, h, w = cond_img.shape
+        extra_cond = default(extra_cond, torch.zeros((b, self.extra_channels, h, w), device=self.device))
+        return self.ddim_p_sample_loop((b, self.channels, h, w), cond_img, extra_cond, verbose)
 
+    @torch.no_grad()
+    def ddim_p_sample_loop(self, shape, cond_img, extra_cond, verbose=True):
+        self.history = []
+        img = torch.randn(shape, device=self.device)
+
+        # 提前提取条件特征（只需一次）
+        conditioning_features = self.model.extract_features(cond_img)
+
+        # DDIM 使用非均匀时间步，但仍用 linspace 兼容你的 num_sample_steps
+        steps = torch.linspace(1., 0., self.num_sample_steps + 1, device=self.device)
+
+        for i in tqdm(range(self.num_sample_steps), desc='DDIM sampling', total=self.num_sample_steps, disable=not verbose):
+            t = steps[i]
+            t_next = steps[i + 1]
+            img = self.ddim_p_sample(img, conditioning_features, extra_cond, t, t_next)
+
+        img.clamp_(-1., 1.)
+        img = unnormalize_to_zero_to_one(img)
+        return img
+
+    @torch.no_grad()
+    def ddim_p_sample(self, x, cond, extra_cond, time, time_next):
+        batch, *_, device = *x.shape, x.device
+
+        log_snr = self.log_snr(time)
+        log_snr_next = self.log_snr(time_next)
+
+        alpha = log_snr.sigmoid().sqrt()
+        sigma = (-log_snr).sigmoid().sqrt()
+        alpha_next = log_snr_next.sigmoid().sqrt()
+
+        # 注意：这里直接使用模型预测的 x0（因 pred_objective='x0'）
+        batch_log_snr = repeat(log_snr, ' -> b', b=x.shape[0])
+        pred = self.model.sample_unet(torch.cat([x, extra_cond], dim=1), batch_log_snr, cond)
+
+        if self.pred_objective == 'x0':
+            x_start = pred.tanh().clamp(-1., 1.)
+        elif self.pred_objective == 'eps':
+            x_start = (x - sigma * pred) / alpha
+        elif self.pred_objective == 'v':
+            x_start = alpha * x - sigma * pred
+        else:
+            raise NotImplementedError
+
+        self.history.append(x_start)
+
+        # DDIM 核心：确定性更新（无噪声项）
+        x_next = alpha_next * x_start + ( (1 - alpha_next**2).sqrt() / (1 - alpha**2).sqrt() ) * (x - alpha * x_start)
+
+        return x_next
 
 class ResCondGaussianDiffusion(CondGaussianDiffusion):
     def __init__(self, *args, **kwargs):

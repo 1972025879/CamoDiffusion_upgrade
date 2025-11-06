@@ -139,8 +139,9 @@ if __name__ == "__main__":
                 # 假设 eval_score 是一个字典，例如 {'Smeasure': 0.85, 'wFmeasure': 0.76, ...}
                 if isinstance(eval_score, dict):
                     for key, value in eval_score.items():
-                        f.write(f"  {key}: {value:.6f}\n")
-                else:
-                    f.write(f"  {str(eval_score)}\n")
+                        if isinstance(value, (int, float)):
+                            f.write(f"  {key}: {value:.6f}\n")
+                        else:
+                            f.write(f"  {key}: {value}\n")
                 f.write("\n")  # 空行分隔不同数据集
         trainer.accelerator.wait_for_everyone()

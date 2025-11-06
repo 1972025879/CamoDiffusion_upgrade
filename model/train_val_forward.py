@@ -36,17 +36,26 @@ def simple_train_val_forward(model: nn.Module, gt=None, image=None, **kwargs):
             "gt": gt if gt is not None else None,
         }
 
-
 def modification_train_val_forward(model: nn.Module, gt=None, image=None, seg=None, **kwargs):
-    """This is for the modification task. When diffusion model add noise, will use seg instead of gt. """
+    """This is for the modification task. When diffusion model add noise, will use seg instead of gt."""
+    sampler = kwargs.pop('sampler', 'ddpm')  # ✅ 新增：从 kwargs 中提取 sampler
+
     if model.training:
         assert gt is not None and image is not None and seg is not None
         return model(gt, image, seg=seg, **kwargs)
     else:
-        time_ensemble = kwargs.pop('time_ensemble') if 'time_ensemble' in kwargs else False
+        time_ensemble = kwargs.pop('time_ensemble', False)
         gt_sizes = kwargs.pop('gt_sizes') if time_ensemble else None
-        pred = model.sample(image, **kwargs).detach().cpu()
-        if time_ensemble:
+        actual_time_ensemble = time_ensemble and (sampler != 'dpm++')
+        # === 核心修改：根据 sampler 选择采样方法 ===
+        if sampler == 'ddim':
+            pred = model.ddim_sample(image, **kwargs).detach().cpu()
+        elif sampler == 'dpm++':
+            pred = model.dpm_sample(image, **kwargs).detach().cpu()
+        else:  # 'ddpm' or others
+            pred = model.sample(image, **kwargs).detach().cpu()
+
+        if actual_time_ensemble:
             """ Here is the function 3, Uncertainty based"""
             preds = torch.concat(model.history, dim=1).detach().cpu()
             pred = torch.mean(preds, dim=1, keepdim=True)

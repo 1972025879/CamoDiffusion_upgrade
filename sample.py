@@ -60,6 +60,8 @@ if __name__ == "__main__":
     parser.add_argument('--time_ensemble', action='store_true')
     parser.add_argument('--batch_ensemble', action='store_true')
     parser.add_argument('--custom_header', type=str, default="CamoDiffusion")
+    parser.add_argument('--sampler', type=str, choices=['ddpm', 'ddim',"dpm++"], default='ddpm',
+                    help='Sampling method: ddpm (original stochastic) or ddim (deterministic)')
     
     
     cfg = add_args(parser)
@@ -93,6 +95,7 @@ if __name__ == "__main__":
         amp=cfg.fp16,
         log_with=None,
         cfg=cfg,
+        sampler=cfg.sampler,
     )
 
     trainer.load(pretrained_path=cfg.checkpoint)
